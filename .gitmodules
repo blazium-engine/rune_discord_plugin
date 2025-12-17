@@ -1,0 +1,15 @@
+[submodule "rune_plugin_sdk"]
+	path = rune_plugin_sdk
+	url = https://github.com/blazium-engine/rune_plugin_sdk.git
+[submodule "vendored/DPP"]
+	path = vendored/DPP
+	url = https://github.com/brainboxdotcc/DPP.git
+[submodule "vendored/zlib"]
+	path = vendored/zlib
+	url = https://github.com/madler/zlib.git
+[submodule "vendored/openssl"]
+	path = vendored/openssl
+	url = https://github.com/openssl/openssl.git
+[submodule "vendored/json"]
+	path = vendored/json
+	url = https://github.com/nlohmann/json.git
