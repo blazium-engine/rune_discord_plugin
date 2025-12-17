@@ -1,0 +1,47 @@
+diff --git a/library/CMakeLists.txt b/library/CMakeLists.txt
+index cc94d030..ac05e15d 100644
+--- a/library/CMakeLists.txt
++++ b/library/CMakeLists.txt
+@@ -69,9 +69,16 @@ endif()
+ 
+ if (CONAN_EXPORTED)
+ 	message("-- INFO: ${Green}Conan detected${ColourReset}... finding packages...")
+-	find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
+-	find_package(ZLIB REQUIRED)
+-	find_package(Opus)
++	if (NOT WIN32)
++		# On non-Windows, use find_package for Conan targets
++		find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
++		find_package(ZLIB REQUIRED)
++		find_package(Opus)
++	else()
++		# On Windows with CONAN_EXPORTED, libraries are provided externally
++		# via cache variables (OPENSSL_SSL_LIBRARY, OPENSSL_CRYPTO_LIBRARY, ZLIB_LIBRARY)
++		message("-- Using externally provided OpenSSL/zlib libraries")
++	endif()
+ 	find_package(Threads REQUIRED)
+ 	find_package(Git QUIET)
+ endif()
+@@ -98,6 +105,11 @@ if(WIN32 AND NOT MINGW)
+ 			set(HAVE_OPUS_OPUS_H "${CMAKE_CURRENT_SOURCE_DIR}/../win32/include/opus/opus.h")
+ 
+ 			include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../win32/include")
++		else()
++			# CONAN_EXPORTED: Use externally provided OpenSSL/zlib
++			# Include dirs and libraries are set by parent CMakeLists.txt
++			message("-- Using externally provided OpenSSL and zlib (static linking)")
++			include_directories(${OPENSSL_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
+ 		endif()
+ 
+ 		set(OPUS_FOUND 1)
+@@ -295,6 +307,10 @@ foreach (fullmodname ${subdirlist})
+ 				"${CMAKE_CURRENT_SOURCE_DIR}/../win32/32/lib/zlib.lib")
+ 		endif()
+ 
++	elseif (WIN32 AND NOT MINGW AND CONAN_EXPORTED)
++		# Windows with externally provided static OpenSSL/zlib (not Conan targets)
++		# Libraries are linked by parent CMakeLists.txt via target_link_libraries(dpp ...)
++		target_link_libraries(${modname} PUBLIC ws2_32 crypt32)
+ 	else()
+ 		if (CONAN_EXPORTED)
+ 			target_link_libraries(${modname} PUBLIC openssl::openssl ZLIB::ZLIB Opus::opus)

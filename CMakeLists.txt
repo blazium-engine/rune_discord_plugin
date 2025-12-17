@@ -1,7 +1,7 @@
 # RUNE Discord Plugin - CMake Build File
 # 
 # Integrates DPP (D++ Discord Library) with RUNE Plugin SDK
-# Builds DPP statically using vendored dependencies (openssl, zlib, json)
+# Builds DPP with vendored dependencies (openssl, zlib, json) linked statically
 
 cmake_minimum_required(VERSION 3.16)
 project(rune_discord_plugin LANGUAGES CXX C)
@@ -30,7 +30,7 @@ ExternalProject_Add(zlib_ext
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         -DBUILD_SHARED_LIBS=OFF
     BUILD_BYPRODUCTS
-        ${ZLIB_INSTALL_DIR}/lib/zlibstatic.lib
+        ${ZLIB_INSTALL_DIR}/lib/zs.lib
         ${ZLIB_INSTALL_DIR}/lib/libz.a
 )
 
@@ -39,7 +39,7 @@ add_library(zlib_static STATIC IMPORTED)
 add_dependencies(zlib_static zlib_ext)
 if(WIN32)
     set_target_properties(zlib_static PROPERTIES
-        IMPORTED_LOCATION ${ZLIB_INSTALL_DIR}/lib/zlibstatic.lib
+        IMPORTED_LOCATION ${ZLIB_INSTALL_DIR}/lib/zs.lib
     )
 else()
     set_target_properties(zlib_static PROPERTIES
@@ -107,27 +107,37 @@ set_target_properties(openssl_crypto PROPERTIES IMPORTED_LOCATION ${OPENSSL_CRYP
 # Configure DPP with vendored dependencies
 # ============================================================================
 
-# On Windows, DPP static lib exceeds 4GB limit, so build as shared DLL
-# but link OpenSSL/zlib statically into DPP
+# DPP must be built as shared on Windows (static lib exceeds 4GB limit)
+# but we link OpenSSL/zlib statically INTO the DPP DLL
 if(WIN32)
     set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 else()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 endif()
+
 set(DPP_BUILD_TEST OFF CACHE BOOL "" FORCE)
 set(DPP_INSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_VOICE_SUPPORT OFF CACHE BOOL "" FORCE)
 set(DPP_NO_VCPKG ON CACHE BOOL "" FORCE)
 set(DPP_USE_EXTERNAL_JSON ON CACHE BOOL "" FORCE)
+set(DPP_NO_CORO ON CACHE BOOL "" FORCE)
 
-# Point DPP to our vendored OpenSSL and zlib
+# Tell DPP we're using external dependencies (like Conan would)
+# This makes DPP use find_package instead of bundled win32 libs
+set(CONAN_EXPORTED ON CACHE BOOL "" FORCE)
+
+# Set up variables for find_package(OpenSSL) and find_package(ZLIB)
+set(OPENSSL_ROOT_DIR ${OPENSSL_INSTALL_DIR} CACHE PATH "" FORCE)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INSTALL_DIR}/include CACHE PATH "" FORCE)
-set(OPENSSL_LIBRARIES "${OPENSSL_SSL_LIBRARY};${OPENSSL_CRYPTO_LIBRARY}" CACHE STRING "" FORCE)
+set(OPENSSL_SSL_LIBRARY ${OPENSSL_SSL_LIBRARY} CACHE FILEPATH "" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_CRYPTO_LIBRARY} CACHE FILEPATH "" FORCE)
+
+set(ZLIB_ROOT ${ZLIB_INSTALL_DIR} CACHE PATH "" FORCE)
 set(ZLIB_INCLUDE_DIR ${ZLIB_INSTALL_DIR}/include CACHE PATH "" FORCE)
 if(WIN32)
-    set(ZLIB_LIBRARIES ${ZLIB_INSTALL_DIR}/lib/zlibstatic.lib CACHE STRING "" FORCE)
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/zs.lib CACHE FILEPATH "" FORCE)
 else()
-    set(ZLIB_LIBRARIES ${ZLIB_INSTALL_DIR}/lib/libz.a CACHE STRING "" FORCE)
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/libz.a CACHE FILEPATH "" FORCE)
 endif()
 
 # Add DPP subdirectory
@@ -135,6 +145,11 @@ add_subdirectory(vendored/DPP)
 
 # Make DPP depend on our external builds
 add_dependencies(dpp zlib_ext openssl_ext)
+
+# Manually link our static OpenSSL/zlib to DPP since CONAN_EXPORTED expects
+# the targets to exist from find_package
+target_link_libraries(dpp PUBLIC ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} ${ZLIB_LIBRARY})
+target_include_directories(dpp PUBLIC ${OPENSSL_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
 
 # ============================================================================
 # Plugin source files
@@ -170,7 +185,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${ZLIB_INSTALL_DIR}/include
 )
 
-# Link against static DPP and dependencies
+# Link against DPP
 target_link_libraries(${PROJECT_NAME} PRIVATE dpp)
 
 # Platform-specific settings
@@ -187,7 +202,7 @@ if(WIN32)
         user32 
         gdi32
     )
-    # Copy DPP DLL to dist (no external OpenSSL/zlib DLLs needed - they're linked into DPP)
+    # Copy DPP DLL to dist (OpenSSL/zlib are now linked statically into DPP)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:dpp> ${CMAKE_CURRENT_SOURCE_DIR}/dist/
         COMMENT "Copying DPP DLL to dist"
