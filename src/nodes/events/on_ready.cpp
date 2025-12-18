@@ -29,25 +29,47 @@ static bool on_ready_start_listening(void* inst_ptr, ExecContext* ctx) {
     inst->ctx = ctx;
     inst->listening = true;
 
-    // Resolve token from property, flow/app env, or plugin settings
-    std::string token = ResolveDiscordToken(ctx);
-    if (token.empty()) {
-        ctx->set_error(ctx, "Discord bot token is required");
-        return false;
-    }
-
     const DiscordPluginConfig& cfg = GetDiscordPluginConfig();
 
-    // Initialize bot if not running and auto_connect is enabled
+    // Log current configuration and bot state when this node begins listening
+    if (g_host) {
+        std::string msg = "Discord On Ready: start_listening (auto_connect=";
+        msg += cfg.auto_connect ? "true" : "false";
+        msg += ", bot_running=";
+        msg += BotManager::instance().is_running() ? "true" : "false";
+        msg += ", gateway_intents=";
+        msg += std::to_string(cfg.gateway_intents);
+        msg += ", enable_message_content_intent=";
+        msg += cfg.enable_message_content_intent ? "true" : "false";
+        msg += ", enable_dpp_logging=";
+        msg += cfg.enable_dpp_logging ? "true" : "false";
+        msg += ", ready_already_fired=";
+        msg += BotManager::instance().has_ready_fired() ? "true" : "false";
+        msg += ")";
+        g_host->log(PLUGIN_LOG_LEVEL_DEBUG, msg.c_str());
+    }
+
+    // In auto-connect mode, ensure the bot is running when this node starts listening.
     if (cfg.auto_connect && !BotManager::instance().is_running()) {
-        if (!BotManager::instance().initialize(token)) {
-            ctx->set_error(ctx, "Failed to initialize Discord bot");
-            return false;
+        if (g_host) {
+            g_host->log(PLUGIN_LOG_LEVEL_INFO,
+                "Discord On Ready: auto_connect is true and bot is not running; requesting Discord auto-connect");
+        }
+        Discord_EnsureAutoConnectFromConfig();
+    }
+    else if (!cfg.auto_connect && !BotManager::instance().is_running()) {
+        if (g_host) {
+            g_host->log(PLUGIN_LOG_LEVEL_WARN,
+                "Discord On Ready: auto_connect is false and bot is not running; use Connect Discord node before On Ready will fire");
         }
     }
 
     BotManager::instance().add_ready_listener([inst]() {
         if (inst && inst->listening && inst->ctx) {
+            if (g_host) {
+                g_host->log(PLUGIN_LOG_LEVEL_INFO,
+                    "Discord On Ready: Ready event received, triggering OnReady output");
+            }
             inst->ctx->trigger_output(inst->ctx, "OnReady");
         }
     });

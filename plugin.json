@@ -1,0 +1,14 @@
+{
+    "id": "com.rune.discord",
+    "name": "Discord Bot",
+    "version": "1.0.0",
+    "api_version": 1,
+    "entry_symbol": "NodePlugin_GetAPI",
+    "author": "RUNE Team",
+    "description": "Discord bot integration for RUNE using D++ library",
+    "library": "rune_discord_plugin",
+    "dependencies": [],
+    "capabilities": ["network"],
+    "min_host_version": "1.0.0"
+}
+
