@@ -299,9 +299,24 @@ void BotManager::send_direct_message(dpp::snowflake user_id, const std::string& 
         }
 
         if (cb.is_error()) {
+            const auto& error = cb.get_error();
+
             std::string err = "Discord plugin: direct_message_create failed: ";
-            err += cb.get_error().message;
+            err += error.message;
             g_host->log(PLUGIN_LOG_LEVEL_ERROR, err.c_str());
+
+            const std::string& emsg = error.message;
+            const bool has401 = (emsg.find("401") != std::string::npos);
+            const bool hasUnauthorized =
+                (emsg.find("Unauthorized") != std::string::npos) ||
+                (emsg.find("unauthorized") != std::string::npos);
+
+            if (has401 || hasUnauthorized) {
+                g_host->log(PLUGIN_LOG_LEVEL_ERROR,
+                    "Discord plugin: Discord returned 401 Unauthorized for direct_message_create. "
+                    "This usually means the bot token is invalid, includes the 'Bot ' prefix, or has been reset. "
+                    "Update the DISCORD_TOKEN environment variable or plugin settings token with a valid raw bot token and reconnect.");
+            }
         }
     });
 }

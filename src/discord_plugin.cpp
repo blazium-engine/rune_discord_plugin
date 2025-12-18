@@ -77,6 +77,65 @@ const DiscordPluginConfig& GetDiscordPluginConfig()
     return g_DiscordConfig;
 }
 
+// Normalize a Discord bot token before use.
+// - Strips a leading "Bot " prefix (case-insensitive) if present.
+// - Logs a warning if the token looks unusually short.
+static std::string NormalizeDiscordToken(const std::string& raw)
+{
+    std::string token = raw;
+
+    if (!token.empty())
+    {
+        // Strip optional "Bot " prefix (case-insensitive)
+        const char prefix[] = "Bot ";
+        const size_t prefixLen = sizeof(prefix) - 1;
+
+        if (token.size() >= prefixLen)
+        {
+            bool match = true;
+            for (size_t i = 0; i < prefixLen; ++i)
+            {
+                char c1 = token[i];
+                char c2 = prefix[i];
+
+                // tolower without <cctype> locale complications
+                if (c1 >= 'A' && c1 <= 'Z')
+                    c1 = static_cast<char>(c1 - 'A' + 'a');
+                if (c2 >= 'A' && c2 <= 'Z')
+                    c2 = static_cast<char>(c2 - 'A' + 'a');
+
+                if (c1 != c2)
+                {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match)
+            {
+                token.erase(0, prefixLen);
+                if (g_host)
+                {
+                    g_host->log(PLUGIN_LOG_LEVEL_WARN,
+                        "Discord plugin: token started with 'Bot ' prefix; prefix has been stripped before connecting");
+                }
+            }
+        }
+
+        // Discord bot tokens are typically long; warn if the resolved token is suspiciously short.
+        if (token.size() > 0 && token.size() < 30)
+        {
+            if (g_host)
+            {
+                g_host->log(PLUGIN_LOG_LEVEL_WARN,
+                    "Discord plugin: resolved Discord token appears unusually short; verify that it is correct");
+            }
+        }
+    }
+
+    return token;
+}
+
 std::string ResolveDiscordToken(ExecContext* ctx)
 {
     // 1. Node input pin "Token" (runtime value)
@@ -85,7 +144,7 @@ std::string ResolveDiscordToken(ExecContext* ctx)
         const char* inputToken = ctx->get_input_string(ctx, "Token");
         if (inputToken && inputToken[0] != '\0')
         {
-            return std::string(inputToken);
+            return NormalizeDiscordToken(std::string(inputToken));
         }
     }
 
@@ -95,7 +154,7 @@ std::string ResolveDiscordToken(ExecContext* ctx)
         const char* propToken = ctx->get_property(ctx, "Token");
         if (propToken && propToken[0] != '\0')
         {
-            return std::string(propToken);
+            return NormalizeDiscordToken(std::string(propToken));
         }
     }
 
@@ -105,21 +164,21 @@ std::string ResolveDiscordToken(ExecContext* ctx)
         const char* flowToken = RUNE_FLOW_ENV_GET(g_host, "DISCORD_TOKEN");
         if (flowToken && flowToken[0] != '\0')
         {
-            return std::string(flowToken);
+            return NormalizeDiscordToken(std::string(flowToken));
         }
 
         // 4. Application environment DISCORD_TOKEN
         const char* appToken = RUNE_APP_ENV_GET(g_host, "DISCORD_TOKEN");
         if (appToken && appToken[0] != '\0')
         {
-            return std::string(appToken);
+            return NormalizeDiscordToken(std::string(appToken));
         }
     }
 
     // 5. Plugin settings token
     if (!g_DiscordConfig.token.empty())
     {
-        return g_DiscordConfig.token;
+        return NormalizeDiscordToken(g_DiscordConfig.token);
     }
 
     return std::string();
@@ -355,7 +414,7 @@ static const PluginSettingsSchema* Discord_GetSettingsSchema(void)
             "},"
             "\"token\":{"
                 "\"type\":\"string\","
-                "\"description\":\"Discord bot token (optional if provided via env or node property)\""
+                "\"description\":\"Discord bot token (raw token from Discord Developer Portal, without the 'Bot ' prefix; optional if provided via DISCORD_TOKEN env or node property)\""
             "},"
             "\"gateway_intents\":{"
                 "\"type\":\"integer\","
