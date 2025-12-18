@@ -5,6 +5,7 @@
 #include "bot_manager.h"
 #include "discord_plugin.h"
 #include <thread>
+#include <exception>
 
 BotManager& BotManager::instance() {
     static BotManager instance;
@@ -34,16 +35,67 @@ bool BotManager::initialize(const std::string& token) {
 
     const DiscordPluginConfig& cfg = GetDiscordPluginConfig();
 
-    uint64_t intents = 0;
-    bool usingOverride = false;
+    auto any_flags_set = [](const DiscordPluginConfig& c) -> bool {
+        return c.intent_guilds ||
+               c.intent_guild_members ||
+               c.intent_guild_bans ||
+               c.intent_guild_emojis ||
+               c.intent_guild_integrations ||
+               c.intent_guild_webhooks ||
+               c.intent_guild_invites ||
+               c.intent_guild_voice_states ||
+               c.intent_guild_presences ||
+               c.intent_guild_messages ||
+               c.intent_guild_message_reactions ||
+               c.intent_guild_message_typing ||
+               c.intent_direct_messages ||
+               c.intent_direct_message_reactions ||
+               c.intent_direct_message_typing ||
+               c.intent_message_content ||
+               c.intent_guild_scheduled_events ||
+               c.intent_auto_moderation_configuration ||
+               c.intent_auto_moderation_execution;
+    };
 
-    if (cfg.gateway_intents != 0) {
+    uint64_t intents = 0;
+    const bool hasFlagOverrides = any_flags_set(cfg);
+    bool usingOverride = false;
+    const char* source = "defaults";
+
+    if (hasFlagOverrides) {
+        // Build intents from per-flag booleans
+        if (cfg.intent_guilds) intents |= dpp::i_guilds;
+        if (cfg.intent_guild_members) intents |= dpp::i_guild_members;
+        if (cfg.intent_guild_bans) intents |= dpp::i_guild_bans;
+        if (cfg.intent_guild_emojis) intents |= dpp::i_guild_emojis;
+        if (cfg.intent_guild_integrations) intents |= dpp::i_guild_integrations;
+        if (cfg.intent_guild_webhooks) intents |= dpp::i_guild_webhooks;
+        if (cfg.intent_guild_invites) intents |= dpp::i_guild_invites;
+        if (cfg.intent_guild_voice_states) intents |= dpp::i_guild_voice_states;
+        if (cfg.intent_guild_presences) intents |= dpp::i_guild_presences;
+        if (cfg.intent_guild_messages) intents |= dpp::i_guild_messages;
+        if (cfg.intent_guild_message_reactions) intents |= dpp::i_guild_message_reactions;
+        if (cfg.intent_guild_message_typing) intents |= dpp::i_guild_message_typing;
+        if (cfg.intent_direct_messages) intents |= dpp::i_direct_messages;
+        if (cfg.intent_direct_message_reactions) intents |= dpp::i_direct_message_reactions;
+        if (cfg.intent_direct_message_typing) intents |= dpp::i_direct_message_typing;
+        if (cfg.intent_message_content) intents |= dpp::i_message_content;
+        if (cfg.intent_guild_scheduled_events) intents |= dpp::i_guild_scheduled_events;
+        if (cfg.intent_auto_moderation_configuration) intents |= dpp::i_auto_moderation_configuration;
+        if (cfg.intent_auto_moderation_execution) intents |= dpp::i_auto_moderation_execution;
+        source = "flags";
+    } else if (cfg.gateway_intents != 0) {
+        // Legacy integer override path
         intents = cfg.gateway_intents;
         usingOverride = true;
+        source = "integer_override";
     } else {
+        // No flags and no override: use DPP defaults
         intents = dpp::i_default_intents;
+        source = "defaults";
     }
 
+    // Always respect the explicit message content toggle
     if (cfg.enable_message_content_intent) {
         intents |= dpp::i_message_content;
     }
@@ -53,12 +105,19 @@ bool BotManager::initialize(const std::string& token) {
         msg += std::to_string(token.size());
         msg += ", intents=";
         msg += std::to_string(intents);
-        msg += usingOverride ? ", source=override)" : ", source=defaults)";
+        msg += ", source=";
+        msg += source;
+        if (usingOverride) {
+            msg += " (integer_override)";
+        }
+        msg += ")";
         g_host->log(PLUGIN_LOG_LEVEL_INFO, msg.c_str());
     }
 
     m_token = token;
-    m_bot = std::make_unique<dpp::cluster>(token, intents);
+    // DPP cluster constructor expects intents in its own numeric type; perform an
+    // explicit cast here to avoid implicit narrowing warnings inside std::make_unique.
+    m_bot = std::make_unique<dpp::cluster>(token, static_cast<decltype(dpp::i_default_intents)>(intents));
 
     // Forward DPP logs into the unified plugin log (at DEBUG level) if enabled
     if (g_host && m_bot && cfg.enable_dpp_logging) {
@@ -201,20 +260,59 @@ void BotManager::tick() {
         switch (event.type) {
             case DiscordEventType::Ready:
                 for (auto& cb : ready_cbs) {
-                    cb();
+                    try {
+                        cb();
+                    } catch (const std::exception& e) {
+                        if (g_host) {
+                            std::string msg = "Discord plugin: exception in Ready listener: ";
+                            msg += e.what();
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR, msg.c_str());
+                        }
+                    } catch (...) {
+                        if (g_host) {
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR,
+                                "Discord plugin: unknown exception in Ready listener");
+                        }
+                    }
                 }
                 m_readyFired = true;
                 break;
 
             case DiscordEventType::Message:
                 for (auto& cb : message_cbs) {
-                    cb(event.message_data);
+                    try {
+                        cb(event.message_data);
+                    } catch (const std::exception& e) {
+                        if (g_host) {
+                            std::string msg = "Discord plugin: exception in Message listener: ";
+                            msg += e.what();
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR, msg.c_str());
+                        }
+                    } catch (...) {
+                        if (g_host) {
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR,
+                                "Discord plugin: unknown exception in Message listener");
+                        }
+                    }
                 }
                 break;
 
             case DiscordEventType::ReactionAdd:
                 for (auto& cb : reaction_cbs) {
-                    cb(event.reaction_data);
+                    try {
+                        cb(event.reaction_data);
+                    } catch (const std::exception& e) {
+                        if (g_host) {
+                            std::string msg = "Discord plugin: exception in Reaction listener: ";
+                            msg += e.what();
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR, msg.c_str());
+                        }
+                    } catch (...) {
+                        if (g_host) {
+                            g_host->log(PLUGIN_LOG_LEVEL_ERROR,
+                                "Discord plugin: unknown exception in Reaction listener");
+                        }
+                    }
                 }
                 break;
         }

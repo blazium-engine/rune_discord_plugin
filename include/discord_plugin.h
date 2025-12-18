@@ -39,8 +39,32 @@ struct DiscordPluginConfig
     bool auto_connect;
     std::string token;
 
-    // 0 means \"use DPP defaults\"; non-zero overrides gateway intents bitmask
+    // 0 means \"use DPP defaults\"; non-zero overrides gateway intents bitmask.
+    // This is preserved for backward compatibility and advanced overrides.
     uint64_t gateway_intents;
+
+    // Per-intent flags (derived from/stored in plugin settings).
+    // These map directly to dpp::intents bits and are combined into
+    // the effective gateway intents bitmask when connecting.
+    bool intent_guilds;
+    bool intent_guild_members;
+    bool intent_guild_bans;
+    bool intent_guild_emojis;
+    bool intent_guild_integrations;
+    bool intent_guild_webhooks;
+    bool intent_guild_invites;
+    bool intent_guild_voice_states;
+    bool intent_guild_presences;
+    bool intent_guild_messages;
+    bool intent_guild_message_reactions;
+    bool intent_guild_message_typing;
+    bool intent_direct_messages;
+    bool intent_direct_message_reactions;
+    bool intent_direct_message_typing;
+    bool intent_message_content;
+    bool intent_guild_scheduled_events;
+    bool intent_auto_moderation_configuration;
+    bool intent_auto_moderation_execution;
 
     // Convenience toggles
     bool enable_message_content_intent;

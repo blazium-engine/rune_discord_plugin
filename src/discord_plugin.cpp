@@ -16,9 +16,34 @@ HostServices* g_host = nullptr;
 static DiscordPluginConfig g_DiscordConfig{
     true,              // auto_connect
     std::string(),     // token
-    0,                 // gateway_intents (0 = use DPP defaults)
-    false,             // enable_message_content_intent
-    true               // enable_dpp_logging
+
+    // Legacy integer override (0 = use DPP defaults or per-intent flags)
+    0,                 // gateway_intents
+
+    // Per-intent flags (default to DPP's i_default_intents set)
+    true,  // intent_guilds
+    false, // intent_guild_members (privileged)
+    true,  // intent_guild_bans
+    true,  // intent_guild_emojis
+    true,  // intent_guild_integrations
+    true,  // intent_guild_webhooks
+    true,  // intent_guild_invites
+    true,  // intent_guild_voice_states
+    false, // intent_guild_presences (privileged)
+    true,  // intent_guild_messages
+    true,  // intent_guild_message_reactions
+    true,  // intent_guild_message_typing
+    true,  // intent_direct_messages
+    true,  // intent_direct_message_reactions
+    true,  // intent_direct_message_typing
+    false, // intent_message_content (privileged; controlled via enable_message_content_intent)
+    true,  // intent_guild_scheduled_events
+    true,  // intent_auto_moderation_configuration
+    true,  // intent_auto_moderation_execution
+
+    // Convenience toggles
+    false, // enable_message_content_intent
+    true   // enable_dpp_logging
 };
 
 static void Discord_UpdateConfigFromJson(const char* settings_json)
@@ -27,6 +52,28 @@ static void Discord_UpdateConfigFromJson(const char* settings_json)
     g_DiscordConfig.auto_connect = true;
     g_DiscordConfig.token.clear();
     g_DiscordConfig.gateway_intents = 0;
+
+    // Reset per-intent flags to match DPP default intents by default
+    g_DiscordConfig.intent_guilds = true;
+    g_DiscordConfig.intent_guild_members = false;
+    g_DiscordConfig.intent_guild_bans = true;
+    g_DiscordConfig.intent_guild_emojis = true;
+    g_DiscordConfig.intent_guild_integrations = true;
+    g_DiscordConfig.intent_guild_webhooks = true;
+    g_DiscordConfig.intent_guild_invites = true;
+    g_DiscordConfig.intent_guild_voice_states = true;
+    g_DiscordConfig.intent_guild_presences = false;
+    g_DiscordConfig.intent_guild_messages = true;
+    g_DiscordConfig.intent_guild_message_reactions = true;
+    g_DiscordConfig.intent_guild_message_typing = true;
+    g_DiscordConfig.intent_direct_messages = true;
+    g_DiscordConfig.intent_direct_message_reactions = true;
+    g_DiscordConfig.intent_direct_message_typing = true;
+    g_DiscordConfig.intent_message_content = false;
+    g_DiscordConfig.intent_guild_scheduled_events = true;
+    g_DiscordConfig.intent_auto_moderation_configuration = true;
+    g_DiscordConfig.intent_auto_moderation_execution = true;
+
     g_DiscordConfig.enable_message_content_intent = false;
     g_DiscordConfig.enable_dpp_logging = true;
 
@@ -50,6 +97,40 @@ static void Discord_UpdateConfigFromJson(const char* settings_json)
         if (j.contains("gateway_intents") && j["gateway_intents"].is_number_unsigned())
         {
             g_DiscordConfig.gateway_intents = j["gateway_intents"].get<uint64_t>();
+        }
+
+        // New structured intent flags (preferred UI representation)
+        if (j.contains("gateway_intent_flags") && j["gateway_intent_flags"].is_object())
+        {
+            const json& flags = j["gateway_intent_flags"];
+
+            auto read_bool = [&flags](const char* key, bool& target) {
+                auto it = flags.find(key);
+                if (it != flags.end() && it->is_boolean())
+                {
+                    target = it->get<bool>();
+                }
+            };
+
+            read_bool("guilds", g_DiscordConfig.intent_guilds);
+            read_bool("guild_members", g_DiscordConfig.intent_guild_members);
+            read_bool("guild_bans", g_DiscordConfig.intent_guild_bans);
+            read_bool("guild_emojis", g_DiscordConfig.intent_guild_emojis);
+            read_bool("guild_integrations", g_DiscordConfig.intent_guild_integrations);
+            read_bool("guild_webhooks", g_DiscordConfig.intent_guild_webhooks);
+            read_bool("guild_invites", g_DiscordConfig.intent_guild_invites);
+            read_bool("guild_voice_states", g_DiscordConfig.intent_guild_voice_states);
+            read_bool("guild_presences", g_DiscordConfig.intent_guild_presences);
+            read_bool("guild_messages", g_DiscordConfig.intent_guild_messages);
+            read_bool("guild_message_reactions", g_DiscordConfig.intent_guild_message_reactions);
+            read_bool("guild_message_typing", g_DiscordConfig.intent_guild_message_typing);
+            read_bool("direct_messages", g_DiscordConfig.intent_direct_messages);
+            read_bool("direct_message_reactions", g_DiscordConfig.intent_direct_message_reactions);
+            read_bool("direct_message_typing", g_DiscordConfig.intent_direct_message_typing);
+            read_bool("message_content", g_DiscordConfig.intent_message_content);
+            read_bool("guild_scheduled_events", g_DiscordConfig.intent_guild_scheduled_events);
+            read_bool("auto_moderation_configuration", g_DiscordConfig.intent_auto_moderation_configuration);
+            read_bool("auto_moderation_execution", g_DiscordConfig.intent_auto_moderation_execution);
         }
 
         if (j.contains("enable_message_content_intent") && j["enable_message_content_intent"].is_boolean())
@@ -416,13 +497,95 @@ static const PluginSettingsSchema* Discord_GetSettingsSchema(void)
                 "\"type\":\"string\","
                 "\"description\":\"Discord bot token (raw token from Discord Developer Portal, without the 'Bot ' prefix; optional if provided via DISCORD_TOKEN env or node property)\""
             "},"
+            "\"gateway_intent_flags\":{"
+                "\"type\":\"object\","
+                "\"description\":\"Primary control surface for Discord gateway intents; each checkbox maps to a specific intent bit. If any flags are set, they are combined into the effective intents bitmask.\","
+                "\"properties\":{"
+                    "\"guilds\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILDS intent (guild information)\""
+                    "},"
+                    "\"guild_members\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_MEMBERS intent (privileged)\""
+                    "},"
+                    "\"guild_bans\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_BANS intent\""
+                    "},"
+                    "\"guild_emojis\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_EMOJIS intent\""
+                    "},"
+                    "\"guild_integrations\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_INTEGRATIONS intent\""
+                    "},"
+                    "\"guild_webhooks\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_WEBHOOKS intent\""
+                    "},"
+                    "\"guild_invites\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_INVITES intent\""
+                    "},"
+                    "\"guild_voice_states\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_VOICE_STATES intent\""
+                    "},"
+                    "\"guild_presences\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_PRESENCES intent (privileged)\""
+                    "},"
+                    "\"guild_messages\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_MESSAGES intent\""
+                    "},"
+                    "\"guild_message_reactions\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_MESSAGE_REACTIONS intent\""
+                    "},"
+                    "\"guild_message_typing\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_MESSAGE_TYPING intent\""
+                    "},"
+                    "\"direct_messages\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"DIRECT_MESSAGES intent\""
+                    "},"
+                    "\"direct_message_reactions\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"DIRECT_MESSAGE_REACTIONS intent\""
+                    "},"
+                    "\"direct_message_typing\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"DIRECT_MESSAGE_TYPING intent\""
+                    "},"
+                    "\"message_content\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"MESSAGE_CONTENT intent (privileged; also controlled by the Message Content toggle)\""
+                    "},"
+                    "\"guild_scheduled_events\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"GUILD_SCHEDULED_EVENTS intent\""
+                    "},"
+                    "\"auto_moderation_configuration\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"AUTO_MODERATION_CONFIGURATION intent\""
+                    "},"
+                    "\"auto_moderation_execution\":{"
+                        "\"type\":\"boolean\","
+                        "\"description\":\"AUTO_MODERATION_EXECUTION intent\""
+                    "}"
+                "}"
+            "},"
             "\"gateway_intents\":{"
                 "\"type\":\"integer\","
-                "\"description\":\"Override Discord gateway intents bitmask; 0 uses DPP defaults\""
+                "\"description\":\"Advanced: raw Discord gateway intents bitmask. When non-zero and no flags are set, this overrides the computed flags-based bitmask; 0 uses defaults/flags.\""
             "},"
             "\"enable_message_content_intent\":{"
                 "\"type\":\"boolean\","
-                "\"description\":\"Request the Message Content intent (requires it to be enabled for the bot)\""
+                "\"description\":\"Request the Message Content intent (requires it to be enabled for the bot). This always ORs the MESSAGE_CONTENT bit into the effective intents.\""
             "},"
             "\"enable_dpp_logging\":{"
                 "\"type\":\"boolean\","
@@ -435,6 +598,27 @@ static const PluginSettingsSchema* Discord_GetSettingsSchema(void)
         "{"
         "\"auto_connect\":true,"
         "\"token\":\"\","
+        "\"gateway_intent_flags\":{"
+            "\"guilds\":true,"
+            "\"guild_members\":false,"
+            "\"guild_bans\":true,"
+            "\"guild_emojis\":true,"
+            "\"guild_integrations\":true,"
+            "\"guild_webhooks\":true,"
+            "\"guild_invites\":true,"
+            "\"guild_voice_states\":true,"
+            "\"guild_presences\":false,"
+            "\"guild_messages\":true,"
+            "\"guild_message_reactions\":true,"
+            "\"guild_message_typing\":true,"
+            "\"direct_messages\":true,"
+            "\"direct_message_reactions\":true,"
+            "\"direct_message_typing\":true,"
+            "\"message_content\":false,"
+            "\"guild_scheduled_events\":true,"
+            "\"auto_moderation_configuration\":true,"
+            "\"auto_moderation_execution\":true"
+        "},"
         "\"gateway_intents\":0,"
         "\"enable_message_content_intent\":false,"
         "\"enable_dpp_logging\":true"
