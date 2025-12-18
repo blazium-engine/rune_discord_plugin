@@ -161,9 +161,12 @@ set(PLUGIN_SOURCES
     src/nodes/events/on_ready.cpp
     src/nodes/events/on_message.cpp
     src/nodes/events/on_reaction.cpp
+    src/nodes/actions/connect_discord.cpp
     src/nodes/actions/send_message.cpp
     src/nodes/actions/send_embed.cpp
     src/nodes/actions/reply_to_message.cpp
+    src/nodes/actions/send_direct_message.cpp
+    src/nodes/actions/set_presence.cpp
     src/nodes/data/get_user.cpp
     src/nodes/data/get_channel.cpp
     src/nodes/data/build_embed.cpp
