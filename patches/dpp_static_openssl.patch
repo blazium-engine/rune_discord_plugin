@@ -41,7 +41,7 @@ index cc94d030..ac05e15d 100644
 +	elseif (WIN32 AND NOT MINGW AND CONAN_EXPORTED)
 +		# Windows with externally provided static OpenSSL/zlib (not Conan targets)
 +		# Libraries are linked by parent CMakeLists.txt via target_link_libraries(dpp ...)
-+		target_link_libraries(${modname} PUBLIC ws2_32 crypt32)
++		target_link_libraries(${modname} PUBLIC openssl::openssl ZLIB::ZLIB ws2_32 crypt32)
  	else()
  		if (CONAN_EXPORTED)
  			target_link_libraries(${modname} PUBLIC openssl::openssl ZLIB::ZLIB Opus::opus)
