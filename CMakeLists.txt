@@ -228,6 +228,12 @@ set(ZLIB_LIBRARY ${ZLIB_LIBRARY} CACHE FILEPATH "" FORCE)
 # This prevents FindOpenSSL from checking file existence during configuration
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+# Suppress warnings from DPP vendored library
+# Add warning suppression flags before DPP is built
+if(NOT MSVC)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-variable -Wno-ignored-attributes")
+endif()
+
 # Add DPP subdirectory
 add_subdirectory(vendored/DPP)
 
