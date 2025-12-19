@@ -95,7 +95,7 @@ else()
         SOURCE_DIR ${OPENSSL_SOURCE_DIR}
         BUILD_IN_SOURCE 0
         CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_directory ${OPENSSL_SOURCE_DIR} ${OPENSSL_BUILD_DIR}
-            COMMAND cd ${OPENSSL_BUILD_DIR} && ./Configure linux-x86_64 no-shared no-asm no-tests --prefix=${OPENSSL_INSTALL_DIR} --openssldir=${OPENSSL_INSTALL_DIR}/ssl
+            COMMAND cd ${OPENSSL_BUILD_DIR} && perl Configure linux-x86_64 no-shared no-asm no-tests --prefix=${OPENSSL_INSTALL_DIR} --openssldir=${OPENSSL_INSTALL_DIR}/ssl
         BUILD_COMMAND cd ${OPENSSL_BUILD_DIR} && make -j4
         INSTALL_COMMAND cd ${OPENSSL_BUILD_DIR} && make install_sw
         BUILD_BYPRODUCTS
@@ -328,9 +328,11 @@ else()
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
     # Copy DPP SO to dist (OpenSSL/zlib are now linked statically into DPP)
+    # Also provide an unversioned libdpp.so filename for release workflows.
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:dpp> ${CMAKE_CURRENT_SOURCE_DIR}/dist/
-        COMMENT "Copying DPP SO to dist"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:dpp> ${CMAKE_CURRENT_SOURCE_DIR}/dist/libdpp.so
+        COMMENT "Copying DPP SO to dist (including libdpp.so alias)"
     )
 endif()
 

@@ -177,6 +177,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
           releaseDir="release-artifacts"
           mkdir -p "$releaseDir"
           
@@ -191,8 +192,12 @@ jobs:
           # Copy DPP SO
           if [ -f "dist/libdpp.so" ]; then
             cp "dist/libdpp.so" "$releaseDir/"
+          elif compgen -G "dist/libdpp.so*" > /dev/null; then
+            first_match=$(compgen -G "dist/libdpp.so*" | head -n 1)
+            cp "$first_match" "$releaseDir/"
+            cp "$first_match" "$releaseDir/libdpp.so"
           else
-            echo "Could not find libdpp.so" >&2
+            echo "Could not find libdpp.so (no dist/libdpp.so or dist/libdpp.so* found)" >&2
             exit 1
           fi
           
