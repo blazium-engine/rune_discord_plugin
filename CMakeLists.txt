@@ -9,6 +9,20 @@ project(rune_discord_plugin LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set default build type if not specified
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
+# Force static MSVC runtime before configuring dependencies
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+endif()
+
+# Enable solution folders in Visual Studio
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
 include(ExternalProject)
 
 # ============================================================================
@@ -127,18 +141,81 @@ set(DPP_NO_CORO ON CACHE BOOL "" FORCE)
 set(CONAN_EXPORTED ON CACHE BOOL "" FORCE)
 
 # Set up variables for find_package(OpenSSL) and find_package(ZLIB)
+# We need to set these before DPP tries to find them, even though the libraries
+# haven't been built yet. The paths point to where they will be built.
 set(OPENSSL_ROOT_DIR ${OPENSSL_INSTALL_DIR} CACHE PATH "" FORCE)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INSTALL_DIR}/include CACHE PATH "" FORCE)
-set(OPENSSL_SSL_LIBRARY ${OPENSSL_SSL_LIBRARY} CACHE FILEPATH "" FORCE)
-set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_CRYPTO_LIBRARY} CACHE FILEPATH "" FORCE)
+# OPENSSL_SSL_LIBRARY and OPENSSL_CRYPTO_LIBRARY are already set above
 
 set(ZLIB_ROOT ${ZLIB_INSTALL_DIR} CACHE PATH "" FORCE)
 set(ZLIB_INCLUDE_DIR ${ZLIB_INSTALL_DIR}/include CACHE PATH "" FORCE)
+# ZLIB_LIBRARY is set conditionally above
+
+# Create placeholder directories so CMake doesn't complain about non-existent paths
+# ExternalProject will create the actual directories during build
+file(MAKE_DIRECTORY ${OPENSSL_INSTALL_DIR}/include)
+file(MAKE_DIRECTORY ${ZLIB_INSTALL_DIR}/include)
+
+# Create imported targets for OpenSSL and ZLIB to satisfy find_package
+# These will be populated with actual library paths after ExternalProject builds them
+add_library(OpenSSL::SSL STATIC IMPORTED)
+add_library(OpenSSL::Crypto STATIC IMPORTED)
+set_target_properties(OpenSSL::SSL PROPERTIES
+    IMPORTED_LOCATION ${OPENSSL_SSL_LIBRARY}
+    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+)
+set_target_properties(OpenSSL::Crypto PROPERTIES
+    IMPORTED_LOCATION ${OPENSSL_CRYPTO_LIBRARY}
+    INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_INCLUDE_DIR}
+)
+
+# DPP expects openssl::openssl target when CONAN_EXPORTED is set
+# Create an interface library (not imported) that combines SSL and Crypto
+# This allows it to be used in target_link_libraries
+add_library(openssl_combined INTERFACE)
+target_link_libraries(openssl_combined INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+target_include_directories(openssl_combined INTERFACE ${OPENSSL_INCLUDE_DIR})
+add_library(openssl::openssl ALIAS openssl_combined)
+
+# DPP also expects Opus::opus target when CONAN_EXPORTED is set
+# Since we disabled voice support, create a dummy target
+add_library(Opus::opus INTERFACE IMPORTED)
+set_target_properties(Opus::opus PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES ""
+)
+
+add_library(ZLIB::ZLIB STATIC IMPORTED)
 if(WIN32)
-    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/zs.lib CACHE FILEPATH "" FORCE)
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/zs.lib)
 else()
-    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/libz.a CACHE FILEPATH "" FORCE)
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/libz.a)
 endif()
+set_target_properties(ZLIB::ZLIB PROPERTIES
+    IMPORTED_LOCATION ${ZLIB_LIBRARY}
+    INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR}
+)
+
+# Set all variables that FindOpenSSL.cmake checks for
+# Note: We set these even though the libraries don't exist yet (ExternalProject will build them)
+# This allows DPP's find_package to succeed during configuration
+set(OPENSSL_FOUND TRUE CACHE BOOL "" FORCE)
+set(OpenSSL_FOUND TRUE CACHE BOOL "" FORCE)
+set(OPENSSL_SSL_FOUND TRUE CACHE BOOL "" FORCE)
+set(OPENSSL_CRYPTO_FOUND TRUE CACHE BOOL "" FORCE)
+set(OPENSSL_LIBRARIES ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} CACHE STRING "" FORCE)
+set(OPENSSL_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIR} CACHE PATH "" FORCE)
+set(OPENSSL_SSL_LIBRARY ${OPENSSL_SSL_LIBRARY} CACHE FILEPATH "" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_CRYPTO_LIBRARY} CACHE FILEPATH "" FORCE)
+
+# Set all variables that FindZLIB.cmake checks for
+set(ZLIB_FOUND TRUE CACHE BOOL "" FORCE)
+set(ZLIB_LIBRARIES ${ZLIB_LIBRARY} CACHE STRING "" FORCE)
+set(ZLIB_INCLUDE_DIRS ${ZLIB_INCLUDE_DIR} CACHE PATH "" FORCE)
+set(ZLIB_LIBRARY ${ZLIB_LIBRARY} CACHE FILEPATH "" FORCE)
+
+# Create a custom FindOpenSSL module path to override the standard one
+# This prevents FindOpenSSL from checking file existence during configuration
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Add DPP subdirectory
 add_subdirectory(vendored/DPP)
@@ -172,11 +249,23 @@ set(PLUGIN_SOURCES
     src/nodes/data/build_embed.cpp
 )
 
+# Ensure dist directory exists
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/dist)
+
 # Create shared library
 add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES})
 
+# Ensure ExternalProjects build before the plugin
+add_dependencies(${PROJECT_NAME} zlib_ext openssl_ext)
+
 # Define NODEPLUG_BUILDING to export symbols correctly
 target_compile_definitions(${PROJECT_NAME} PRIVATE NODEPLUG_BUILDING)
+
+# Set runtime library to static on Windows
+if(MSVC)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -227,6 +316,18 @@ endif()
 # Set visibility for symbols
 if(NOT MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=hidden)
+endif()
+
+# Platform-specific compile options
+if(MSVC)
+    # Add /FS flag for parallel compilation with PDB files
+    target_compile_options(${PROJECT_NAME} PRIVATE /FS)
+    
+    # Suppress common warnings
+    target_compile_definitions(${PROJECT_NAME} PRIVATE 
+        _CRT_SECURE_NO_WARNINGS
+        _CRT_NONSTDC_NO_DEPRECATE
+    )
 endif()
 
 # Output to dist directory
