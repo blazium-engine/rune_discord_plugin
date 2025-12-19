@@ -137,10 +137,11 @@ set_target_properties(openssl_crypto PROPERTIES IMPORTED_LOCATION ${OPENSSL_CRYP
 
 # DPP must be built as shared on Windows (static lib exceeds 4GB limit)
 # but we link OpenSSL/zlib statically INTO the DPP DLL
+# On Linux, we also build as shared to match the release workflow expectations
 if(WIN32)
     set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 else()
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 endif()
 
 set(DPP_BUILD_TEST OFF CACHE BOOL "" FORCE)
@@ -326,6 +327,11 @@ else()
         SUFFIX ".so"
     )
     target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+    # Copy DPP SO to dist (OpenSSL/zlib are now linked statically into DPP)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:dpp> ${CMAKE_CURRENT_SOURCE_DIR}/dist/
+        COMMENT "Copying DPP SO to dist"
+    )
 endif()
 
 # Set visibility for symbols
