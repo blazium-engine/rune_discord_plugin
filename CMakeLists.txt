@@ -52,14 +52,19 @@ ExternalProject_Add(zlib_ext
 add_library(zlib_static STATIC IMPORTED)
 add_dependencies(zlib_static zlib_ext)
 if(WIN32)
-    set_target_properties(zlib_static PROPERTIES
-        IMPORTED_LOCATION ${ZLIB_INSTALL_DIR}/lib/zs.lib
-    )
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/zs.lib)
 else()
-    set_target_properties(zlib_static PROPERTIES
-        IMPORTED_LOCATION ${ZLIB_INSTALL_DIR}/lib/libz.a
-    )
+    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/libz.a)
 endif()
+# Convert ZLIB paths to absolute
+# CMAKE_CURRENT_BINARY_DIR is already absolute, so paths constructed from it are absolute
+# Use get_filename_component to normalize and ensure absolute paths
+get_filename_component(ZLIB_LIBRARY "${ZLIB_LIBRARY}" ABSOLUTE)
+get_filename_component(ZLIB_INSTALL_DIR "${ZLIB_INSTALL_DIR}" ABSOLUTE)
+set(ZLIB_INCLUDE_DIR "${ZLIB_INSTALL_DIR}/include")
+set_target_properties(zlib_static PROPERTIES
+    IMPORTED_LOCATION ${ZLIB_LIBRARY}
+)
 
 # ============================================================================
 # OpenSSL - Build from vendored source using ExternalProject
@@ -99,8 +104,9 @@ else()
             ${OPENSSL_INSTALL_DIR}/lib64/libssl.a
             ${OPENSSL_INSTALL_DIR}/lib64/libcrypto.a
     )
-    # OpenSSL may install to lib or lib64 depending on system
-    if(EXISTS ${OPENSSL_INSTALL_DIR}/lib64)
+    # OpenSSL on Linux x86_64 typically installs to lib64
+    # Default to lib64 for Linux x86_64, fallback to lib for other systems
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64" AND NOT APPLE)
         set(OPENSSL_SSL_LIBRARY ${OPENSSL_INSTALL_DIR}/lib64/libssl.a)
         set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_INSTALL_DIR}/lib64/libcrypto.a)
     else()
@@ -108,6 +114,14 @@ else()
         set(OPENSSL_CRYPTO_LIBRARY ${OPENSSL_INSTALL_DIR}/lib/libcrypto.a)
     endif()
 endif()
+
+# Convert all OpenSSL library paths to absolute paths
+# CMAKE_CURRENT_BINARY_DIR is already absolute, so paths constructed from it are absolute
+# Use get_filename_component to normalize and ensure absolute paths
+get_filename_component(OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}" ABSOLUTE)
+get_filename_component(OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}" ABSOLUTE)
+get_filename_component(OPENSSL_INSTALL_DIR "${OPENSSL_INSTALL_DIR}" ABSOLUTE)
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_INSTALL_DIR}/include")
 
 # Create imported targets for OpenSSL
 add_library(openssl_ssl STATIC IMPORTED)
@@ -143,13 +157,14 @@ set(CONAN_EXPORTED ON CACHE BOOL "" FORCE)
 # Set up variables for find_package(OpenSSL) and find_package(ZLIB)
 # We need to set these before DPP tries to find them, even though the libraries
 # haven't been built yet. The paths point to where they will be built.
+# Note: Paths are now absolute after get_filename_component calls above
 set(OPENSSL_ROOT_DIR ${OPENSSL_INSTALL_DIR} CACHE PATH "" FORCE)
-set(OPENSSL_INCLUDE_DIR ${OPENSSL_INSTALL_DIR}/include CACHE PATH "" FORCE)
-# OPENSSL_SSL_LIBRARY and OPENSSL_CRYPTO_LIBRARY are already set above
+# OPENSSL_INCLUDE_DIR is already set as absolute above
+# OPENSSL_SSL_LIBRARY and OPENSSL_CRYPTO_LIBRARY are already set as absolute above
 
 set(ZLIB_ROOT ${ZLIB_INSTALL_DIR} CACHE PATH "" FORCE)
-set(ZLIB_INCLUDE_DIR ${ZLIB_INSTALL_DIR}/include CACHE PATH "" FORCE)
-# ZLIB_LIBRARY is set conditionally above
+# ZLIB_INCLUDE_DIR is already set as absolute above
+# ZLIB_LIBRARY is already set as absolute above
 
 # Create placeholder directories so CMake doesn't complain about non-existent paths
 # ExternalProject will create the actual directories during build
@@ -185,11 +200,7 @@ set_target_properties(Opus::opus PROPERTIES
 )
 
 add_library(ZLIB::ZLIB STATIC IMPORTED)
-if(WIN32)
-    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/zs.lib)
-else()
-    set(ZLIB_LIBRARY ${ZLIB_INSTALL_DIR}/lib/libz.a)
-endif()
+# ZLIB_LIBRARY and ZLIB_INCLUDE_DIR are already set as absolute above
 set_target_properties(ZLIB::ZLIB PROPERTIES
     IMPORTED_LOCATION ${ZLIB_LIBRARY}
     INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR}
@@ -223,10 +234,8 @@ add_subdirectory(vendored/DPP)
 # Make DPP depend on our external builds
 add_dependencies(dpp zlib_ext openssl_ext)
 
-# Manually link our static OpenSSL/zlib to DPP since CONAN_EXPORTED expects
-# the targets to exist from find_package
-target_link_libraries(dpp PUBLIC ${OPENSSL_SSL_LIBRARY} ${OPENSSL_CRYPTO_LIBRARY} ${ZLIB_LIBRARY})
-target_include_directories(dpp PUBLIC ${OPENSSL_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
+# DPP already links to openssl::openssl and ZLIB::ZLIB via CONAN_EXPORTED
+# No need to manually link the libraries again - the imported targets handle it
 
 # ============================================================================
 # Plugin source files
