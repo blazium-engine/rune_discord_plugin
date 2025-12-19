@@ -1,0 +1,261 @@
+name: GitHub Release
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+env:
+  BUILD_CONFIG: Release
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            system_label: Windows
+            os_name: windows
+          - os: ubuntu-latest
+            system_label: Linux
+            os_name: linux
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Generate Semver/w Build SHA
+        id: semver
+        uses: Bioblaze/game-semver-action@v10
+        with:
+            personal_github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update VERSION file (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "${{ steps.semver.outputs.revision_version }}" > VERSION
+
+      - name: Update VERSION file (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $revisionVersion = "${{ steps.semver.outputs.revision_version }}"
+          Set-Content -Path "VERSION" -Value $revisionVersion
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r' < VERSION | xargs)
+          if [[ -z "$version" ]]; then
+            echo "VERSION file is empty" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Update plugin.json version (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq ".version = \"${{ steps.version.outputs.version }}\"" plugin.json > plugin.json.tmp
+          mv plugin.json.tmp plugin.json
+
+      - name: Update plugin.json version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $json = Get-Content -Path "plugin.json" -Raw | ConvertFrom-Json
+          $json.version = "${{ steps.version.outputs.version }}"
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Path "plugin.json"
+
+      - name: Apply vendored patches (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "patches/dpp_static_openssl.patch" ]; then
+            cd vendored/DPP
+            git apply ../../patches/dpp_static_openssl.patch
+          fi
+
+      - name: Apply vendored patches (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path "patches\dpp_static_openssl.patch") {
+            cd vendored\DPP
+            git apply ..\..\patches\dpp_static_openssl.patch
+          }
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build build-essential cmake perl pkg-config \
+            libssl-dev libasound2-dev libpulse-dev libaudio-dev libjack-dev \
+            libsndio-dev libx11-dev libxext-dev libxcursor-dev libxfixes-dev \
+            libxinerama-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev \
+            libdbus-1-dev libibus-1.0-dev libudev-dev libdrm-dev libgbm-dev \
+            libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev libwayland-dev \
+            libxkbcommon-dev libdecor-0-dev libpipewire-0.3-dev liburing-dev \
+            libfribidi-dev libthai-dev zlib1g-dev libpng-dev libjpeg-dev \
+            libtiff-dev libwebp-dev libavif-dev libdav1d-dev libaom-dev \
+            libjxl-dev libfreetype6-dev libharfbuzz-dev libopusfile-dev \
+            libopus-dev libvorbis-dev libogg-dev libflac-dev libmpg123-dev \
+            libxmp-dev libgme-dev libfluidsynth-dev libwavpack-dev jq
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIG }}
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIG }}
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_CONFIG }} --parallel --target rune_discord_plugin
+
+      - name: Prepare release artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $releaseDir = "release-artifacts"
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          
+          # Copy plugin DLL
+          if (Test-Path "dist\Release\rune_discord_plugin.dll") {
+            Copy-Item -Path "dist\Release\rune_discord_plugin.dll" -Destination $releaseDir -Force
+          } elseif (Test-Path "dist\rune_discord_plugin.dll") {
+            Copy-Item -Path "dist\rune_discord_plugin.dll" -Destination $releaseDir -Force
+          } else {
+            Write-Error "Could not find rune_discord_plugin.dll"
+            exit 1
+          }
+          
+          # Copy DPP DLL
+          if (Test-Path "dist\dpp.dll") {
+            Copy-Item -Path "dist\dpp.dll" -Destination $releaseDir -Force
+          } else {
+            Write-Error "Could not find dpp.dll"
+            exit 1
+          }
+          
+          # Copy plugin.json
+          if (Test-Path "dist\plugin.json") {
+            Copy-Item -Path "dist\plugin.json" -Destination $releaseDir -Force
+          } elseif (Test-Path "plugin.json") {
+            Copy-Item -Path "plugin.json" -Destination $releaseDir -Force
+          } else {
+            Write-Error "Could not find plugin.json"
+            exit 1
+          }
+
+      - name: Prepare release artifacts (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          releaseDir="release-artifacts"
+          mkdir -p "$releaseDir"
+          
+          # Copy plugin SO
+          if [ -f "dist/librune_discord_plugin.so" ]; then
+            cp "dist/librune_discord_plugin.so" "$releaseDir/"
+          else
+            echo "Could not find librune_discord_plugin.so" >&2
+            exit 1
+          fi
+          
+          # Copy DPP SO
+          if [ -f "dist/libdpp.so" ]; then
+            cp "dist/libdpp.so" "$releaseDir/"
+          else
+            echo "Could not find libdpp.so" >&2
+            exit 1
+          fi
+          
+          # Copy plugin.json
+          if [ -f "dist/plugin.json" ]; then
+            cp "dist/plugin.json" "$releaseDir/"
+          elif [ -f "plugin.json" ]; then
+            cp "plugin.json" "$releaseDir/"
+          else
+            echo "Could not find plugin.json" >&2
+            exit 1
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os_name }}
+          path: release-artifacts/*
+          retention-days: 1
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Semver/w Build SHA
+        id: semver
+        uses: Bioblaze/game-semver-action@v10
+        with:
+            personal_github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(echo "${{ steps.semver.outputs.revision_version }}" | tr -d '\r' | xargs)
+          if [[ -z "$version" ]]; then
+            echo "Version is empty" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: release-windows
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: release-linux
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          files: |
+            release-windows/*
+            release-linux/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
