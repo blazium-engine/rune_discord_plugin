@@ -258,41 +258,40 @@ jobs:
           name: release-linux
           path: release-linux
 
-      - name: Consolidate release artifacts
+      - name: Create release zip files
         shell: bash
         run: |
           set -euo pipefail
-          releaseFilesDir="release-files"
-          mkdir -p "$releaseFilesDir"
+          version="${{ steps.version.outputs.version }}"
+          releaseZipsDir="release-zips"
+          mkdir -p "$releaseZipsDir"
           
-          # Copy all files from Windows artifacts first (takes precedence for duplicates)
-          if [ -d "release-windows" ]; then
-            for file in release-windows/*; do
-              if [ -f "$file" ]; then
-                filename=$(basename "$file")
-                cp "$file" "$releaseFilesDir/$filename"
-                echo "Copied $filename from Windows artifacts"
-              fi
-            done
+          # Create Windows zip file
+          if [ -d "release-windows" ] && [ "$(ls -A release-windows 2>/dev/null)" ]; then
+            zipFile="$releaseZipsDir/windows-x64-${version}.zip"
+            cd release-windows
+            zip -r "../$zipFile" . -q
+            cd ..
+            echo "Created $zipFile"
+            ls -lh "$zipFile"
+          else
+            echo "Warning: release-windows directory is empty or does not exist" >&2
           fi
           
-          # Copy files from Linux artifacts, skipping duplicates
-          if [ -d "release-linux" ]; then
-            for file in release-linux/*; do
-              if [ -f "$file" ]; then
-                filename=$(basename "$file")
-                if [ ! -f "$releaseFilesDir/$filename" ]; then
-                  cp "$file" "$releaseFilesDir/$filename"
-                  echo "Copied $filename from Linux artifacts"
-                else
-                  echo "Skipped $filename (already exists from Windows artifacts)"
-                fi
-              fi
-            done
+          # Create Linux zip file
+          if [ -d "release-linux" ] && [ "$(ls -A release-linux 2>/dev/null)" ]; then
+            zipFile="$releaseZipsDir/linux-x64-${version}.zip"
+            cd release-linux
+            zip -r "../$zipFile" . -q
+            cd ..
+            echo "Created $zipFile"
+            ls -lh "$zipFile"
+          else
+            echo "Warning: release-linux directory is empty or does not exist" >&2
           fi
           
-          echo "Consolidated release files:"
-          ls -lh "$releaseFilesDir"
+          echo "Release zip files:"
+          ls -lh "$releaseZipsDir"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -300,7 +299,7 @@ jobs:
           tag_name: v${{ steps.version.outputs.version }}
           name: Release v${{ steps.version.outputs.version }}
           files: |
-            release-files/*
+            release-zips/*
           draft: false
           prerelease: false
         env:
