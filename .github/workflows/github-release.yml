@@ -32,6 +32,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Update rune_plugin_sdk submodule to latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --remote rune_plugin_sdk
+          git submodule status rune_plugin_sdk
+
       - name: Generate Semver/w Build SHA
         id: semver
         uses: Bioblaze/game-semver-action@v10
